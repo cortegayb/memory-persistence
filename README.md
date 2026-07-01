@@ -67,7 +67,9 @@ El hook `Stop` registra automáticamente, en la tabla `token_usage`, el consumo 
 tokens de **cada respuesta** (input / cache creation / cache read / output), junto con
 el modelo, la sesión, el prompt que la originó, el **proyecto** (derivado del
 directorio de trabajo) y el **tipo de tarea** (clasificado por palabras clave del
-prompt: `contenido`, `memoria`, `infra/git`, `codigo`, `investigacion`, `otro`).
+prompt: `contenido`, `investigacion`, `memoria`, `codigo`, `infra/git`,
+`conversacion` —saludos/confirmaciones—, `sistema` —ruido del harness como
+`<task-notification>`— y `otro`).
 Calcula además el **costo estimado en USD** según la tarifa de cada modelo.
 
 ```bash

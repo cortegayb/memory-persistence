@@ -165,26 +165,62 @@ def derive_project(cwd):
     return os.path.basename(cwd.rstrip("/")) or "general"
 
 # Clasificador de tipo de tarea por palabras clave del prompt (primer match gana).
+# Los términos son raíces: matchean con frontera a la izquierda y continuación libre
+# (ej. "recuerd" cubre recuerda/recuerdo; "leccion" cubre lecciones), así "api" no
+# matchea "rapido" ni "si" matchea "necesito".
 TASK_RULES = [
     ("contenido",     ("leccion","lección","banco","pregunta","rubrica","rúbrica","diagnostic",
                        "diagnóstic","evaluacion","evaluación","transcri","savia","libro",
-                       "contenido","misconcept","estudiar","tutor")),
+                       "contenido","misconcept","estudiar","tutor","jarvis","cuento","habilidad",
+                       "indicador","concepto")),
     ("memoria",       ("memoria","recuerd","mem.py","consolid","cerebro","semantic","semántic",
-                       "episodic","episódic","olvido","decay","token")),
+                       "episodic","episódic","olvido","decay","token","tarea","feedback_template",
+                       "errata")),
     ("infra/git",     ("git","commit","push","deploy","ssh","systemctl","apache","nginx","certbot",
                        "dns","cron","hook","permis","servidor","vhost","proxy","credential",
-                       "llave","pat","correo","mandrill","smtp")),
+                       "llave","pat","correo","mandrill","smtp","rama","directorio","terminal",
+                       "reinicia","reiniciste","conecta","conectar")),
+    ("investigacion", ("informe","analiz","análisi","investiga","research","reporte","resumen",
+                       "dato","cuantific","churn","métrica","metrica","revisa","consulta","query",
+                       "sql","tabla","log","visor","colegio","licencia","rbd","usuario","estadistic",
+                       "listame","lista ","muestra","detalle","region","región","alumno","profesor",
+                       "adopcion","adopción","apertura","usabilidad","perdida","pérdida","fuga",
+                       "registro","filas","proceso","conteo","contando","cuenta","tsv","csv","xls",
+                       "excel","importar","comparativa","compara","busc","id de")),
     ("codigo",        ("implementa","código","codigo","script","bug","fix","refactor","endpoint",
                        "api","frontend","backend","componente","funcion","función","error","build",
-                       "compila")),
-    ("investigacion", ("informe","analiz","análisi","investiga","research","reporte","resumen",
-                       "dato","cuantific","churn","métrica","metrica","revisa","consulta")),
+                       "compila","vista","menu","menú","boton","botón","btn","card","diseño","css",
+                       "bootstrap","rota","undefined","migrar","alter","python","fastapi","react",
+                       "node","mysql","desarroll","valida")),
 ]
 
+# Ruido del harness (no es una consulta real del usuario).
+def _is_sistema(p):
+    return (p.startswith("<task-notification") or p.startswith("<command") or
+            p.startswith("caveat:") or "session is being continued" in p or
+            "hay mucha demanda y no puedo responder" in p)
+
+# Saludos y confirmaciones (charla, no trabajo técnico).
+_FILLERS = {"si","sí","no","ok","okay","oka","hola","hi","hey","holi","dale","listo","gracias",
+            "yapo","ya","ahora","ahora si","ahora sí","excelente","perfecto","bien","buenas",
+            "buenos dias","buenos días","chao","sip","nop","claro","de acuerdo","incuye todo",
+            "intentemos usar por ahora","vuelve a intentar","echoahora","ahora si","no yo lo reviso"}
+_RECALL = ("te acuerdas","acuerdas de","en que quedamos","en qué quedamos","que hicimos",
+           "qué hicimos","me cuentas","en que quedo","en qué quedó","que quedamos","como estas",
+           "cómo estás","lo ultimo que","lo último que","retoma","retomar","en que quedan",
+           "listame los proyecto","lista los proyecto","listame todos los proyecto","que proyecto",
+           "qué proyecto","estabamos trabajando","estábamos trabajando","en que quedan")
+
 def classify_task(prompt):
-    p = (prompt or "").lower()
+    p = (prompt or "").strip().lower()
+    if not p: return "otro"
+    if _is_sistema(p): return "sistema"
+    if p in _FILLERS or re.match(r"^(hola|hi|hey|buenos dias|buenas|holi)\b", p):
+        return "conversacion"
+    if any(k in p for k in _RECALL): return "conversacion"
     for label, kws in TASK_RULES:
-        if any(k in p for k in kws): return label
+        if any(re.search(r"(?<![a-z0-9áéíóúñü])"+re.escape(k), p) for k in kws):
+            return label
     return "otro"
 
 # Tarifas USD por 1M tokens: (input, output, cache_write_5m, cache_read).
