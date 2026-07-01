@@ -1,0 +1,64 @@
+# IMPORTANTE: Los templates aquí son EJEMPLOS.
+# Tu memoria PERSONAL (diarios, proyectos, datos) debe estar en .gitignore
+# o NO subirse a git.
+
+# Archivos de memoria PERSONAL (NO subir)
+# memory/feedback_*.md          # ← Solo si contienen datos privados
+# memory/project_*.md           # ← Solo si contienen datos privados
+# memory/diario_*.md            # ← Resúmenes personales, NO subir
+# memory/user_*.md              # ← Datos personales, NO subir
+# memory/reference_*.md         # ← Links internos, considerar si subir
+
+# Credenciales y secretos
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+credentials/
+secrets/
+private/
+
+# Sistema
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+.project
+
+# Logs
+*.log
+logs/
+
+# Node (si aplica)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python (si aplica)
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Temporal
+.tmp/
+temp/
+*.tmp
+
+# Sync/Backup
+backups/
+sync/
+*.tar.gz
+memory_backup_*
+
+# IDE
+.DS_Store
+.AppleDouble
+.LSOverride
+*.sublime-project
+*.sublime-workspace
