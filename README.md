@@ -61,6 +61,29 @@ echo '{"title":"...","type":"rule","detail":"...","tags":"db","importance":90}' 
 python3 ~/.memory/mem.py search "tema"
 ```
 
+## Contabilidad de tokens (costo)
+
+El hook `Stop` registra automáticamente, en la tabla `token_usage`, el consumo de
+tokens de **cada respuesta** (input / cache creation / cache read / output), junto con
+el modelo, la sesión, el prompt que la originó, el **proyecto** (derivado del
+directorio de trabajo) y el **tipo de tarea** (clasificado por palabras clave del
+prompt: `contenido`, `memoria`, `infra/git`, `codigo`, `investigacion`, `otro`).
+Calcula además el **costo estimado en USD** según la tarifa de cada modelo.
+
+```bash
+python3 ~/.memory/mem.py tokens_report     # resumen global + por modelo + costo
+python3 ~/.memory/mem.py tokens_daily      # desglose por día
+python3 ~/.memory/mem.py tokens_project    # desglose por PROYECTO
+python3 ~/.memory/mem.py tokens_func       # desglose por TIPO DE TAREA
+python3 ~/.memory/mem.py tokens_detail     # una línea por consulta
+python3 ~/.memory/mem.py tokens_backfill   # reetiqueta proyecto/tarea de filas ya guardadas
+```
+
+Cualquier reporte acepta un `session_id` como argumento para filtrar a una sola sesión.
+`tokens_backfill` es idempotente: reprocesa los transcripts existentes y rellena
+`project`/`task_type` de los registros previos (los transcripts ya rotados quedan
+como `(sin etiqueta)`; los registros nuevos se etiquetan solos).
+
 ## Instalación — Plantillas markdown (Auto-Memory)
 
 ```bash

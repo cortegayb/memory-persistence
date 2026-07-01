@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS token_usage(
   msg_id TEXT UNIQUE, request_id TEXT, model TEXT,
   turn_uuid TEXT, prompt TEXT,
   input_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
-  cache_read_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0);
+  cache_read_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+  project TEXT DEFAULT '', task_type TEXT DEFAULT '');
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
   title, detail, tags, content='semantic', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS sem_ai AFTER INSERT ON semantic BEGIN
@@ -142,7 +143,49 @@ TOKEN_DDL = """CREATE TABLE IF NOT EXISTS token_usage(
   msg_id TEXT UNIQUE, request_id TEXT, model TEXT,
   turn_uuid TEXT, prompt TEXT,
   input_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0,
-  cache_read_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0);"""
+  cache_read_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
+  project TEXT DEFAULT '', task_type TEXT DEFAULT '');"""
+
+def _migrate_tokens(c):
+    # Añade columnas project/task_type a bases ya existentes (idempotente).
+    cols = {r[1] for r in c.execute("PRAGMA table_info(token_usage)")}
+    if "project" not in cols:
+        c.execute("ALTER TABLE token_usage ADD COLUMN project TEXT DEFAULT ''")
+    if "task_type" not in cols:
+        c.execute("ALTER TABLE token_usage ADD COLUMN task_type TEXT DEFAULT ''")
+    c.commit()
+
+def derive_project(cwd):
+    # Proyecto = primer subdirectorio bajo /home/<user>/ (ej. profe_jarvis);
+    # el propio home = 'general'. Fallback: basename del cwd.
+    if not cwd: return "general"
+    m = re.match(r"^/home/[^/]+/([^/]+)", cwd)
+    if m: return m.group(1)
+    if re.match(r"^/home/[^/]+/?$", cwd): return "general"
+    return os.path.basename(cwd.rstrip("/")) or "general"
+
+# Clasificador de tipo de tarea por palabras clave del prompt (primer match gana).
+TASK_RULES = [
+    ("contenido",     ("leccion","lección","banco","pregunta","rubrica","rúbrica","diagnostic",
+                       "diagnóstic","evaluacion","evaluación","transcri","savia","libro",
+                       "contenido","misconcept","estudiar","tutor")),
+    ("memoria",       ("memoria","recuerd","mem.py","consolid","cerebro","semantic","semántic",
+                       "episodic","episódic","olvido","decay","token")),
+    ("infra/git",     ("git","commit","push","deploy","ssh","systemctl","apache","nginx","certbot",
+                       "dns","cron","hook","permis","servidor","vhost","proxy","credential",
+                       "llave","pat","correo","mandrill","smtp")),
+    ("codigo",        ("implementa","código","codigo","script","bug","fix","refactor","endpoint",
+                       "api","frontend","backend","componente","funcion","función","error","build",
+                       "compila")),
+    ("investigacion", ("informe","analiz","análisi","investiga","research","reporte","resumen",
+                       "dato","cuantific","churn","métrica","metrica","revisa","consulta")),
+]
+
+def classify_task(prompt):
+    p = (prompt or "").lower()
+    for label, kws in TASK_RULES:
+        if any(k in p for k in kws): return label
+    return "otro"
 
 # Tarifas USD por 1M tokens: (input, output, cache_write_5m, cache_read).
 # cache_write_5m = 1.25x input ; cache_read = 0.1x input.
@@ -165,37 +208,48 @@ def cmd_tokens(_):
     except Exception: return
     p = d.get("transcript_path"); sid = d.get("session_id","")
     if not p or not os.path.exists(p): return
-    c = conn(); c.executescript(TOKEN_DDL)
-    rows = []; turn = ""; prompt = ""
-    with open(p) as f:
-        for line in f:
-            try: m = json.loads(line)
-            except Exception: continue
-            t = m.get("type")
-            if t == "user" and not m.get("isSidechain"):
-                # ¿Es una consulta real del usuario (no un tool_result)?
-                content = (m.get("message") or {}).get("content")
-                txt = ""; is_tr = False
-                if isinstance(content, str): txt = content
-                elif isinstance(content, list):
-                    for b in content:
-                        if isinstance(b, dict):
-                            if b.get("type")=="tool_result": is_tr=True
-                            elif b.get("type")=="text": txt += b.get("text","")
-                if txt and not is_tr:
-                    turn = m.get("uuid",""); prompt = txt.strip().replace("\n"," ")[:200]
-            elif t == "assistant":
-                msg = m.get("message") or {}; u = msg.get("usage")
-                if not u or not msg.get("id") or msg.get("model")=="<synthetic>": continue
-                rows.append((m.get("timestamp",""), sid, msg["id"], m.get("requestId",""),
-                    msg.get("model",""), turn, prompt, u.get("input_tokens",0),
-                    u.get("cache_creation_input_tokens",0), u.get("cache_read_input_tokens",0),
-                    u.get("output_tokens",0)))
+    c = conn(); c.executescript(TOKEN_DDL); _migrate_tokens(c)
+    rows = _parse_transcript(p, sid)
     if rows:
         c.executemany("""INSERT OR IGNORE INTO token_usage(ts,session_id,msg_id,
             request_id,model,turn_uuid,prompt,input_tokens,cache_creation_tokens,
-            cache_read_tokens,output_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?)""", rows)
+            cache_read_tokens,output_tokens,project,task_type)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
         c.commit()
+
+def _parse_transcript(p, sid):
+    # Recorre un transcript JSONL y devuelve una fila por respuesta del asistente,
+    # etiquetada con proyecto (cwd) y tipo de tarea (clasificador del prompt).
+    rows = []; turn = ""; prompt = ""; cwd = ""
+    try:
+        with open(p) as f:
+            for line in f:
+                try: m = json.loads(line)
+                except Exception: continue
+                if m.get("cwd"): cwd = m["cwd"]
+                t = m.get("type")
+                if t == "user" and not m.get("isSidechain"):
+                    # ¿Es una consulta real del usuario (no un tool_result)?
+                    content = (m.get("message") or {}).get("content")
+                    txt = ""; is_tr = False
+                    if isinstance(content, str): txt = content
+                    elif isinstance(content, list):
+                        for b in content:
+                            if isinstance(b, dict):
+                                if b.get("type")=="tool_result": is_tr=True
+                                elif b.get("type")=="text": txt += b.get("text","")
+                    if txt and not is_tr:
+                        turn = m.get("uuid",""); prompt = txt.strip().replace("\n"," ")[:200]
+                elif t == "assistant":
+                    msg = m.get("message") or {}; u = msg.get("usage")
+                    if not u or not msg.get("id") or msg.get("model")=="<synthetic>": continue
+                    rows.append((m.get("timestamp",""), sid, msg["id"], m.get("requestId",""),
+                        msg.get("model",""), turn, prompt, u.get("input_tokens",0),
+                        u.get("cache_creation_input_tokens",0), u.get("cache_read_input_tokens",0),
+                        u.get("output_tokens",0), derive_project(cwd), classify_task(prompt)))
+    except Exception:
+        return []
+    return rows
 
 def cmd_tokens_report(arg):
     c = conn(); c.executescript(TOKEN_DDL)
@@ -281,6 +335,50 @@ def cmd_tokens_daily(arg):
         print(f"  {mdl or '?':18} ${u:>9,.4f}")
     print(f"\nCOSTO TOTAL: ${gtot:,.4f}")
 
+def _cmd_tokens_group(col, label, arg):
+    # Reporte agrupado por una columna (project o task_type), con costo USD.
+    c = conn(); c.executescript(TOKEN_DDL); _migrate_tokens(c)
+    k = f"COALESCE(NULLIF({col},''),'(sin etiqueta)')"
+    where = "WHERE session_id=?" if arg else ""
+    params = (arg,) if arg else ()
+    cost = {}
+    for r in c.execute(f"""SELECT {k} g, model, SUM(input_tokens) i,
+        SUM(cache_creation_tokens) cc, SUM(cache_read_tokens) cr, SUM(output_tokens) o
+        FROM token_usage {where} GROUP BY g, model""", params):
+        cost[r["g"]] = cost.get(r["g"], 0.0) + cost_usd(
+            r["model"], r["i"] or 0, r["cc"] or 0, r["cr"] or 0, r["o"] or 0)
+    print(f"{label:16} {'consultas':>9} {'resp':>5} {'in':>13} {'out':>9} {'USD':>10}")
+    gtot = 0.0
+    for r in c.execute(f"""SELECT {k} g, COUNT(DISTINCT turn_uuid) q, COUNT(*) n,
+        SUM(input_tokens+cache_creation_tokens+cache_read_tokens) tin, SUM(output_tokens) out
+        FROM token_usage {where} GROUP BY g ORDER BY out DESC""", params):
+        u = cost.get(r["g"], 0.0); gtot += u
+        print(f"{(r['g'] or '?')[:16]:16} {r['q']:>9} {r['n']:>5} "
+              f"{r['tin'] or 0:>13,} {r['out'] or 0:>9,} ${u:>9,.4f}")
+    print(f"\nCOSTO TOTAL: ${gtot:,.4f}")
+
+def cmd_tokens_project(arg): _cmd_tokens_group("project", "proyecto", arg)
+def cmd_tokens_func(arg):    _cmd_tokens_group("task_type", "funcion", arg)
+
+def cmd_tokens_backfill(_):
+    # Reetiqueta filas ya guardadas: recorre los transcripts y rellena
+    # project/task_type de cada msg_id. Idempotente.
+    import glob
+    c = conn(); c.executescript(TOKEN_DDL); _migrate_tokens(c)
+    updates = {}  # msg_id -> (project, task_type)
+    base = os.path.expanduser("~/.claude/projects")
+    for path in glob.glob(os.path.join(base, "*", "*.jsonl")):
+        for row in _parse_transcript(path, ""):
+            # row: (ts,sid,msg_id,req,model,turn,prompt,inp,cc,cr,out,project,task_type)
+            updates[row[2]] = (row[11], row[12])
+    n = 0
+    for msg_id, (proj, tt) in updates.items():
+        cur = c.execute("UPDATE token_usage SET project=?, task_type=? WHERE msg_id=?",
+                        (proj, tt, msg_id))
+        n += cur.rowcount
+    c.commit()
+    print(f"Backfill: {len(updates)} respuestas en transcripts, {n} filas actualizadas en token_usage.")
+
 def cmd_decay(_):
     c = conn()
     for r in c.execute("SELECT * FROM semantic WHERE status='active'").fetchall():
@@ -295,7 +393,8 @@ if __name__=="__main__":
         {"init":cmd_init,"context":cmd_context,"add":cmd_add,"log":cmd_log,
          "decay":cmd_decay,"search":cmd_search,"tokens":cmd_tokens,
          "tokens_report":cmd_tokens_report,"tokens_detail":cmd_tokens_detail,
-         "tokens_daily":cmd_tokens_daily,
+         "tokens_daily":cmd_tokens_daily,"tokens_project":cmd_tokens_project,
+         "tokens_func":cmd_tokens_func,"tokens_backfill":cmd_tokens_backfill,
          "count_pending":cmd_count_pending}.get(cmd, cmd_search)(arg)
     except Exception:
         pass  # nunca bloquear un hook
