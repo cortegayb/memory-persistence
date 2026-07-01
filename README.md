@@ -16,39 +16,78 @@ Sistema que permite a usuarios de Claude Code:
 - **Búsqueda Inteligente**: DeepRecall carga contexto relevante automáticamente
 - **Escalable**: Funciona en múltiples servidores con datos locales independientes
 
-## Instalación Rápida
+## Dos sabores
 
-### 1. Clonar el repositorio
+Este repo trae **dos** sistemas complementarios. Elige según lo que necesites:
+
+| | Cerebro SQLite (recomendado) | Plantillas markdown |
+|---|---|---|
+| Qué es | Motor real: `mem.py` + hooks + consolidador + DB con FTS5 | Estructura de archivos `.md` (Auto-Memory) |
+| Recuperación | Automática por relevancia (búsqueda + decaimiento/olvido) | Manual, índice en `MEMORY.md` |
+| Instalación | `./install.sh` | copiar `memory/.templates/` |
+| Carpeta | `engine/` + `config/` | `memory/.templates/` |
+
+> **Importante:** replicar a otro servidor copia **solo el mecanismo**. La base de datos
+> nace **vacía** — tus recuerdos personales NO viajan (los excluye `.gitignore`).
+
+## Instalación — Cerebro SQLite (recomendado)
 
 ```bash
 git clone https://github.com/cortegayb/memory-persistence.git
 cd memory-persistence
+./install.sh              # instala en $HOME  (o: ./install.sh /ruta/base)
 ```
 
-### 2. Configurar para Claude Code
+Qué hace `install.sh` (idempotente, no pisa lo que ya exista):
 
-Coloca la carpeta `memory/` en tu instalación local de Claude Code:
+1. Copia `engine/mem.py` → `~/.memory/mem.py` (el motor; deriva solo la ruta de la DB).
+2. Instala `~/.memory/consolidate.sh` y el subagente `~/.claude/agents/memory-consolidator.md`.
+3. Crea `~/.claude/settings.json` con los 3 hooks (SessionStart / UserPromptSubmit / Stop).
+4. Crea `CLAUDE.md` (el protocolo) — edita la **sección 3** con tus reglas de proyecto.
+5. Ejecuta `mem.py init` → base de datos **vacía** con tablas `episodic`/`semantic`/FTS5.
+
+Consolidación nocturna opcional (cron):
+
+```bash
+(crontab -l 2>/dev/null; echo "0 4 * * * $HOME/.memory/consolidate.sh") | crontab -
+```
+
+Uso manual del motor:
+
+```bash
+# guardar un recuerdo
+echo '{"title":"...","type":"rule","detail":"...","tags":"db","importance":90}' | python3 ~/.memory/mem.py add
+# buscar
+python3 ~/.memory/mem.py search "tema"
+```
+
+## Instalación — Plantillas markdown (Auto-Memory)
 
 ```bash
 mkdir -p ~/.claude/projects/YOUR_PROJECT/memory
 cp -r memory/.templates/* ~/.claude/projects/YOUR_PROJECT/memory/
 ```
 
-### 3. DeepRecall cargará automáticamente
-
 Al iniciar Claude Code, DeepRecall busca y carga tus memorias.
 
 ## Estructura
 
 ```
-memory/
-├── MEMORY.md              # Índice principal de todas las memorias
-├── .templates/
-│   ├── feedback_template.md      # Template: Reglas y preferencias
-│   ├── project_template.md       # Template: Proyectos
-│   ├── diario_template.md        # Template: Resúmenes de sesiones
-│   ├── user_template.md          # Template: Datos del usuario
-│   └── reference_template.md     # Template: Links externos
+memory-persistence/
+├── install.sh              # Instalador del cerebro SQLite
+├── engine/                 # El motor (se copia a ~/.memory y ~/.claude/agents)
+│   ├── mem.py                    # núcleo: FTS5 + decaimiento + add/search/log
+│   ├── consolidate.sh            # consolidación nocturna (cron)
+│   └── memory-consolidator.md    # subagente "sueño"
+├── config/                 # Plantillas de configuración (usan __MEM_HOME__)
+│   ├── settings.json             # hooks SessionStart/UserPromptSubmit/Stop
+│   └── CLAUDE.md                 # el protocolo (sección 3 vacía para tus reglas)
+└── memory/.templates/      # Sistema markdown (Auto-Memory), alternativo
+    ├── feedback_template.md      # Template: Reglas y preferencias
+    ├── project_template.md       # Template: Proyectos
+    ├── diario_template.md        # Template: Resúmenes de sesiones
+    ├── user_template.md          # Template: Datos del usuario
+    └── reference_template.md     # Template: Links externos
 ```
 
 ## Cómo Usar

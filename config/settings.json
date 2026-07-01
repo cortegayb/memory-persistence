@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __MEM_HOME__/.memory/mem.py context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __MEM_HOME__/.memory/mem.py search"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __MEM_HOME__/.memory/mem.py log"
+          },
+          {
+            "type": "command",
+            "command": "python3 __MEM_HOME__/.memory/mem.py tokens"
+          }
+        ]
+      }
+    ]
+  }
+}
