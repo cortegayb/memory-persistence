@@ -26,7 +26,7 @@ Ejemplo: "Experiencia pasada mostró que mocked tests pasaron pero la prod migra
 
 ## How to Apply (Cuándo aplica)
 
-**How to apply:** Describeситуации específicas donde esta regla debe cumplirse.
+**How to apply:** Describe situaciones específicas donde esta regla debe cumplirse.
 
 Ejemplo: "Aplica en todos los tests que tocan persistencia: migrations, seed, fixtures"
 
